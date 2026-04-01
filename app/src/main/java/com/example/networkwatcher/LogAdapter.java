@@ -29,8 +29,10 @@ public class LogAdapter extends RecyclerView.Adapter<LogAdapter.LogViewHolder> {
         
         holder.tvIp.setText("IP: " + (item.getIp() != null ? item.getIp() : "Bilinmiyor"));
         holder.tvDetails.setText(item.getDetails() != null ? item.getDetails() : "");
-        holder.tvTime.setText(item.getTime() != null ? item.getTime() : "");
-
+        LogItem.Protocol protocol = item.getProtocol();
+        if (protocol != null) {
+            holder.tvDetails.setText(item.getDetails() + " [" + protocol.name() + "]");
+        }
         // KRİTİK DÜZELTME: Eski verilerde status null olabilir, kontrol ediyoruz.
         LogItem.Status status = item.getStatus();
         if (status == null) {

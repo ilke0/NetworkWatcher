@@ -107,14 +107,14 @@ public class MyVpnService extends VpnService implements Runnable {
                 .build();
     }
 
-    private void saveAndNotify(String ip, String detail, LogItem.Status status) {
+    private void saveAndNotify(String ip, String detail, LogItem.Status status, LogItem.Protocol protocol) {
         String time = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
-        LogItem item = new LogItem(ip, detail, time, status);
+        LogItem item = new LogItem(ip, detail, time, status, protocol);
         LogPersistence.saveLog(this, item);
         sendBroadcast(new Intent(ACTION_LOG_UPDATE));
     }
 
-    private void sendDdosAlert(String ip) {
+    private void sendDdosAlert(String ip, LogItem.Protocol protocol) {
         long now = System.currentTimeMillis();
         if (mLastAlertTime.containsKey(ip) && (now - mLastAlertTime.get(ip) < ALERT_COOLDOWN)) {
             return;
@@ -130,7 +130,7 @@ public class MyVpnService extends VpnService implements Runnable {
 
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         nm.notify(ip.hashCode(), alert);
-        saveAndNotify(ip, "Saldırı Engellendi: Olağandışı trafik!", LogItem.Status.DANGEROUS);
+        saveAndNotify(ip, "Saldırı Engellendi: Olağandışı trafik!", LogItem.Status.DANGEROUS, protocol);
     }
 
     @Override
@@ -164,20 +164,33 @@ public class MyVpnService extends VpnService implements Runnable {
                     packet.get(12) & 0xFF, packet.get(13) & 0xFF,
                     packet.get(14) & 0xFF, packet.get(15) & 0xFF);
 
+            LogItem.Protocol protocol = getProtocol(packet);
+
             if (!mKnownIps.contains(sourceIp)) {
                 mKnownIps.add(sourceIp);
-                saveAndNotify(sourceIp, "Yeni güvenli bağlantı sağlandı.", LogItem.Status.SAFE);
+                saveAndNotify(sourceIp, "Yeni güvenli bağlantı sağlandı.", LogItem.Status.SAFE, protocol);
             }
 
             int count = mPacketCounts.getOrDefault(sourceIp, 0) + 1;
             mPacketCounts.put(sourceIp, count);
 
             if (count > THRESHOLD_DANGEROUS) {
-                sendDdosAlert(sourceIp);
+                sendDdosAlert(sourceIp, protocol);
             } else if (count > THRESHOLD_SUSPICIOUS) {
-                saveAndNotify(sourceIp, "Şüpheli trafik artışı: " + count + " paket/sn", LogItem.Status.SUSPICIOUS);
+                saveAndNotify(sourceIp, "Şüpheli trafik artışı: " + count + " paket/sn", LogItem.Status.SUSPICIOUS, protocol);
             }
         }
+    }
+    private LogItem.Protocol getProtocol(ByteBuffer packet) {
+        int proto = packet.get(9) & 0xFF;
+        if (proto == 6) return LogItem.Protocol.TCP;
+        if (proto == 17) {
+            int destPort = ((packet.get(22) & 0xFF) << 8) | (packet.get(23) & 0xFF);
+            if (destPort == 53) return LogItem.Protocol.DNS;
+            return LogItem.Protocol.UDP;
+        }
+        if (proto == 1) return LogItem.Protocol.ICMP;
+        return LogItem.Protocol.OTHER;
     }
 
     @Override
