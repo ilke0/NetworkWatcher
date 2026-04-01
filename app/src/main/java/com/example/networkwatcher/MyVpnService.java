@@ -164,20 +164,26 @@ public class MyVpnService extends VpnService implements Runnable {
                     packet.get(12) & 0xFF, packet.get(13) & 0xFF,
                     packet.get(14) & 0xFF, packet.get(15) & 0xFF);
 
+            // ← YENİ: Hedef IP'yi de oku
+            String destIp = String.format("%d.%d.%d.%d",
+                    packet.get(16) & 0xFF, packet.get(17) & 0xFF,
+                    packet.get(18) & 0xFF, packet.get(19) & 0xFF);
+
             LogItem.Protocol protocol = getProtocol(packet);
 
-            if (!mKnownIps.contains(sourceIp)) {
-                mKnownIps.add(sourceIp);
-                saveAndNotify(sourceIp, "Yeni güvenli bağlantı sağlandı.", LogItem.Status.SAFE, protocol);
+            // ← DEĞİŞTİ: Hedef IP'yi logla, kaynak değil
+            if (!mKnownIps.contains(destIp)) {
+                mKnownIps.add(destIp);
+                saveAndNotify(destIp, "→ " + sourceIp + " kaynağından bağlantı", LogItem.Status.SAFE, protocol);
             }
 
-            int count = mPacketCounts.getOrDefault(sourceIp, 0) + 1;
-            mPacketCounts.put(sourceIp, count);
+            int count = mPacketCounts.getOrDefault(destIp, 0) + 1;
+            mPacketCounts.put(destIp, count);
 
             if (count > THRESHOLD_DANGEROUS) {
-                sendDdosAlert(sourceIp, protocol);
+                sendDdosAlert(destIp, protocol);
             } else if (count > THRESHOLD_SUSPICIOUS) {
-                saveAndNotify(sourceIp, "Şüpheli trafik artışı: " + count + " paket/sn", LogItem.Status.SUSPICIOUS, protocol);
+                saveAndNotify(destIp, "Şüpheli trafik artışı: " + count + " paket/sn", LogItem.Status.SUSPICIOUS, protocol);
             }
         }
     }
