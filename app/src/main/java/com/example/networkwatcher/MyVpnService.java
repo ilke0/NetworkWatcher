@@ -71,7 +71,8 @@ public class MyVpnService extends VpnService implements Runnable {
         mThread.start();
 
         mScheduler = Executors.newSingleThreadScheduledExecutor();
-        mScheduler.scheduleAtFixedRate(() -> mPacketCounts.clear(), 
+        // scheduleAtFixedRate yerine scheduleWithFixedDelay kullanımı önerilir.
+        mScheduler.scheduleWithFixedDelay(mPacketCounts::clear, 
                 WINDOW_DURATION_MS, WINDOW_DURATION_MS, TimeUnit.MILLISECONDS);
     }
 
@@ -86,8 +87,8 @@ public class MyVpnService extends VpnService implements Runnable {
     }
 
     private void createNotificationChannels() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationManager nm = getSystemService(NotificationManager.class);
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        if (nm != null) {
             NotificationChannel vpnChannel = new NotificationChannel(
                     CHANNEL_ID, "Security Monitor", NotificationManager.IMPORTANCE_LOW);
             nm.createNotificationChannel(vpnChannel);
@@ -108,6 +109,7 @@ public class MyVpnService extends VpnService implements Runnable {
     }
 
     private void saveAndNotify(String ip, String detail, LogItem.Status status, LogItem.Protocol protocol) {
+        // Güncel saat bilgisini alıyoruz
         String time = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
         LogItem item = new LogItem(ip, detail, time, status, protocol);
         LogPersistence.saveLog(this, item);
@@ -116,7 +118,8 @@ public class MyVpnService extends VpnService implements Runnable {
 
     private void sendDdosAlert(String ip, LogItem.Protocol protocol) {
         long now = System.currentTimeMillis();
-        if (mLastAlertTime.containsKey(ip) && (now - mLastAlertTime.get(ip) < ALERT_COOLDOWN)) {
+        Long lastAlert = mLastAlertTime.get(ip);
+        if (lastAlert != null && (now - lastAlert < ALERT_COOLDOWN)) {
             return;
         }
         mLastAlertTime.put(ip, now);
@@ -129,7 +132,9 @@ public class MyVpnService extends VpnService implements Runnable {
                 .build();
 
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        nm.notify(ip.hashCode(), alert);
+        if (nm != null) {
+            nm.notify(ip.hashCode(), alert);
+        }
         saveAndNotify(ip, "Saldırı Engellendi: Olağandışı trafik!", LogItem.Status.DANGEROUS, protocol);
     }
 
@@ -143,14 +148,17 @@ public class MyVpnService extends VpnService implements Runnable {
             builder.setSession("SecurityGuard");
             mInterface = builder.establish();
 
-            FileInputStream in = new FileInputStream(mInterface.getFileDescriptor());
-            ByteBuffer packet = ByteBuffer.allocate(32767);
+            if (mInterface == null) return;
 
-            while (!Thread.interrupted()) {
-                int length = in.read(packet.array());
-                if (length > 0) {
-                    analyzePacket(packet);
-                    packet.clear();
+            try (FileInputStream in = new FileInputStream(mInterface.getFileDescriptor())) {
+                ByteBuffer packet = ByteBuffer.allocate(32767);
+
+                while (!Thread.interrupted()) {
+                    int length = in.read(packet.array());
+                    if (length > 0) {
+                        analyzePacket(packet);
+                        packet.clear();
+                    }
                 }
             }
         } catch (Exception e) {
@@ -160,24 +168,23 @@ public class MyVpnService extends VpnService implements Runnable {
 
     private void analyzePacket(ByteBuffer packet) {
         if ((packet.get(0) >> 4 & 0x0F) == 4) {
-            String sourceIp = String.format("%d.%d.%d.%d",
+            String sourceIp = String.format(Locale.US, "%d.%d.%d.%d",
                     packet.get(12) & 0xFF, packet.get(13) & 0xFF,
                     packet.get(14) & 0xFF, packet.get(15) & 0xFF);
 
-            // ← YENİ: Hedef IP'yi de oku
-            String destIp = String.format("%d.%d.%d.%d",
+            String destIp = String.format(Locale.US, "%d.%d.%d.%d",
                     packet.get(16) & 0xFF, packet.get(17) & 0xFF,
                     packet.get(18) & 0xFF, packet.get(19) & 0xFF);
 
             LogItem.Protocol protocol = getProtocol(packet);
 
-            // ← DEĞİŞTİ: Hedef IP'yi logla, kaynak değil
             if (!mKnownIps.contains(destIp)) {
                 mKnownIps.add(destIp);
                 saveAndNotify(destIp, "→ " + sourceIp + " kaynağından bağlantı", LogItem.Status.SAFE, protocol);
             }
 
-            int count = mPacketCounts.getOrDefault(destIp, 0) + 1;
+            Integer currentCount = mPacketCounts.get(destIp);
+            int count = (currentCount != null ? currentCount : 0) + 1;
             mPacketCounts.put(destIp, count);
 
             if (count > THRESHOLD_DANGEROUS) {
